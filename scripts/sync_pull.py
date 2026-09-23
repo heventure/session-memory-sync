@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Pull the memory repo and restore session memory into the local session home.
+"""Pull the memory repo and restore session memory into local agent session homes.
 
 Usage:
-  sync_pull.py <repo-path> --list                 # list projects and sessions in the repo
-  sync_pull.py <repo-path> [--project KEY]        # restore one project (default: current workDir's)
-  sync_pull.py <repo-path> --all                  # restore every project
+  sync_pull.py <repo-path> --list                  # list projects/agents/sessions in the repo
+  sync_pull.py <repo-path> [--project KEY] [--agent NAME]   # restore (default: current workDir, all agents)
+  sync_pull.py <repo-path> --all                   # restore every project
 
-Restore copies session dirs back into the session home (never overwriting a newer
-local session) and merges entries into session_index.jsonl so the agent can see them.
+Never overwrites a newer local copy. Kimi sessions are additionally merged into
+session_index.jsonl so the agent can discover them.
 """
 import argparse
 import json
@@ -15,58 +15,97 @@ import shutil
 import sys
 from pathlib import Path
 
-from common import git, has_upstream, kimi_home, load_index, project_key, repo_path, save_index
+from agents import copy_restore_root
+from common import (git, has_upstream, kimi_home, load_index, project_key,
+                    repo_path, save_index)
+
+
+def iter_projects(repo: Path):
+    return sorted(p for p in repo.iterdir() if p.is_dir() and any(p.glob("*.index.json")))
 
 
 def list_projects(repo: Path) -> None:
-    for proj in sorted(p for p in repo.iterdir() if p.is_dir() and not p.name.startswith(".")):
-        meta_file = proj / "index.json"
-        if meta_file.exists():
+    for proj in iter_projects(repo):
+        for meta_file in sorted(proj.glob("*.index.json")):
             m = json.loads(meta_file.read_text())
-            print(f"{proj.name}\tworkDir={m.get('workDir')}\tsessions={len(m.get('sessions', []))}\tsyncedAt={m.get('syncedAt')}")
+            print(f"{proj.name}\tagent={m['agent']}\tworkDir={m.get('workDir')}\t"
+                  f"sessions={len(m.get('sessions', []))}\tsyncedAt={m.get('syncedAt')}")
 
 
-def restore_project(repo: Path, home: Path, proj_dir: Path) -> int:
-    meta_file = proj_dir / "index.json"
-    if not meta_file.exists():
+def newest_mtime(p: Path) -> float:
+    if p.is_file():
+        return p.stat().st_mtime
+    return max((f.stat().st_mtime for f in p.rglob("*") if f.is_file()), default=0)
+
+
+def restore_kimi(sess: Path, workdir: str, home: Path, by_id: dict) -> bool:
+    sid = sess.name
+    existing = by_id.get(sid, {}).get("sessionDir")
+    if existing:
+        target = Path(existing)
+    else:
+        base = Path(workdir).name
+        wd_dirs = sorted((home / "sessions").glob(f"wd_{base}*"))
+        target = (wd_dirs[0] if wd_dirs else home / "sessions" / f"wd_{base}") / sid
+    if target.exists() and newest_mtime(target) >= newest_mtime(sess):
+        return False
+    if target.exists():
+        shutil.rmtree(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(sess, target)
+    by_id[sid] = {"sessionId": sid, "sessionDir": str(target), "workDir": workdir}
+    return True
+
+
+def restore_files(proj_dir: Path, agent: str, workdir: str) -> int:
+    root = copy_restore_root(agent)
+    if root is None:
         return 0
-    meta = json.loads(meta_file.read_text())
-    work_dir = meta["workDir"]
-    rows = load_index(home)
-    by_id = {r["sessionId"]: r for r in rows}
-    restored = 0
-    for sess in sorted((proj_dir / "sessions").iterdir()):
-        if not sess.is_dir():
+    if agent == "claude":
+        root = root / workdir.replace("/", "-")
+    n = 0
+    for src in sorted((proj_dir / agent).rglob("*")):
+        if not src.is_file():
             continue
-        sid = sess.name
-        # reuse the existing wd_* dir for this workDir if one exists, else create one
-        base = Path(work_dir).name
-        existing = by_id.get(sid, {}).get("sessionDir")
-        if existing:
-            target = Path(existing)
+        dest = root / src.relative_to(proj_dir / agent)
+        if dest.exists() and dest.stat().st_mtime >= src.stat().st_mtime:
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        n += 1
+    return n
+
+
+def restore_project(repo: Path, proj_dir: Path, only_agent: str | None) -> int:
+    total = 0
+    for meta_file in sorted(proj_dir.glob("*.index.json")):
+        meta = json.loads(meta_file.read_text())
+        agent = meta["agent"]
+        if only_agent and agent != only_agent:
+            continue
+        workdir = meta["workDir"]
+        if agent == "kimi":
+            home = kimi_home()
+            rows = load_index(home)
+            by_id = {r["sessionId"]: r for r in rows}
+            n = 0
+            for sess in sorted((proj_dir / "kimi").iterdir()):
+                if sess.is_dir() and restore_kimi(sess, workdir, home, by_id):
+                    n += 1
+            if n:
+                save_index(home, list(by_id.values()))
         else:
-            wd_dirs = sorted((home / "sessions").glob(f"wd_{base}*"))
-            target = (wd_dirs[0] if wd_dirs else home / "sessions" / f"wd_{base}") / sid
-        if target.exists():
-            # keep whichever copy is newer
-            local_new = max((f.stat().st_mtime for f in target.rglob("*") if f.is_file()), default=0)
-            repo_new = max((f.stat().st_mtime for f in sess.rglob("*") if f.is_file()), default=0)
-            if local_new >= repo_new:
-                continue
-            shutil.rmtree(target)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(sess, target)
-        by_id[sid] = {"sessionId": sid, "sessionDir": str(target), "workDir": work_dir}
-        restored += 1
-    if restored:
-        save_index(home, list(by_id.values()))
-    return restored
+            n = restore_files(proj_dir, agent, workdir)
+        print(f"{proj_dir.name}/{agent}: restored {n}")
+        total += n
+    return total
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("repo", nargs="?")
     ap.add_argument("--project", default=None)
+    ap.add_argument("--agent", default=None)
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--workdir", default=str(Path.cwd()))
@@ -80,19 +119,13 @@ def main() -> None:
         list_projects(repo)
         return
 
-    home = kimi_home()
-    keys = ([a.project] if a.project
-            else None if a.all
-            else [project_key(a.workdir)])
-    proj_dirs = ([p for p in repo.iterdir() if (p / "index.json").exists()] if keys is None
-                 else [repo / k for k in keys])
+    proj_dirs = (iter_projects(repo) if a.all
+                 else [repo / (a.project or project_key(a.workdir))])
     total = 0
     for pd in proj_dirs:
         if pd.is_dir():
-            n = restore_project(repo, home, pd)
-            total += n
-            print(f"{pd.name}: restored {n} session(s)")
-    print(f"done, {total} session(s) restored into {home / 'sessions'}")
+            total += restore_project(repo, pd, a.agent)
+    print(f"done, {total} item(s) restored")
 
 
 if __name__ == "__main__":

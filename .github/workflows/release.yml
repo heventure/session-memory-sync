@@ -52,6 +52,7 @@ jobs:
           # npm pack paths are package/<file>
           require '^package/SKILL\.md$'
           require '^package/scripts/common\.py$'
+          require '^package/scripts/agents\.py$'
           require '^package/scripts/sync_push\.py$'
           require '^package/scripts/sync_pull\.py$'
           require '^package/package\.json$'

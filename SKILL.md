@@ -1,42 +1,53 @@
 ---
 name: session-memory-sync
-description: Sync Kimi Work agent session memory to and from a user-provided git repository. Use when the user asks to save/commit/back up the current session's memory, extract session files into a git repo, restore or pull session memory from the repo, resume past conversations on another machine, or reference other projects' session history. The repo's top-level directories are per-project, so one repo manages memory for many projects.
+description: Sync agent session memory (Kimi Work, Codex, Claude Code, and other CLI agents) to and from a user-controlled git repository. Use when the user asks to save/commit/back up the current session's memory, extract session files into a git repo, restore or pull session memory, resume past conversations on another machine, or reference other projects' session history. The repo's top-level directories are per-project, with per-agent subdirectories, so one repo manages memory for many projects and many agents.
 ---
 
 # Session Memory Sync
 
-Sync agent session files between the local session home and a git repository, organized per project.
+Sync agent session files between local session stores and a git repository, organized per project and per agent. Works with multiple agent families; adapters live in `scripts/agents.py`:
 
-## Concepts
+- **kimi** — Kimi Work / Kimi Code (`$KIMI_HOME` or the default daimon runtime home; uses `session_index.jsonl`)
+- **codex** — Codex CLI/Desktop (`~/.codex/sessions/**/rollout-*.jsonl`, matched by `session_meta.cwd`)
+- **claude** — Claude Code (`~/.claude/projects/<path-slug>/*.jsonl`)
 
-- **Session home**: `$KIMI_HOME` or `~/Library/Application Support/kimi-desktop/daimon-share/daimon/runtime/kimi-code/home`. Sessions live under `<home>/sessions/<wd_*>/<sessionId>/` (state.json + agents/*/wire.jsonl); `<home>/session_index.jsonl` maps sessionId → sessionDir → workDir.
-- **Memory repo**: one git repo per user. Top-level dir = sanitized project dir name (`project_key` in scripts/common.py), containing `index.json` (workDir, sync time, session list) and `sessions/<sessionId>/`.
-- Repo location: pass as first CLI arg, or set env `SESSION_MEMORY_REPO`. The repo must be cloned locally first; if the user only has a remote URL, clone it before running scripts.
+To add another agent (opencode, deepseek-harness, pi, …), add one extractor function to `scripts/agents.py` and register it in `ADAPTERS`.
+
+## First use: onboard the memory repo
+
+On the first run in a new environment, ALWAYS ask the user which they prefer before doing anything:
+
+1. **User-provided repo** — the user gives a remote URL or local path; clone it if needed.
+2. **Agent-created repo** — create a new **private** repo for the user (e.g. `gh repo create session-memory --private`), clone it, and make an initial commit.
+
+Then remember the local path (env `SESSION_MEMORY_REPO`, or pass it as the first CLI arg). Session files contain full conversation content — the repo MUST be private unless the user insists otherwise.
 
 ## Push (save current session memory)
 
 ```bash
-python3 scripts/sync_push.py <repo-path> --workdir "$PWD"
+python3 scripts/sync_push.py <repo-path> --workdir "$PWD"                # auto-detect agents
+python3 scripts/sync_push.py <repo-path> --agent codex                   # one agent only
+python3 scripts/sync_push.py <repo-path> --agent all                     # every supported agent
 ```
 
-Copies all `conv-*` sessions whose workDir is the current workspace into `<repo>/<project>/sessions/`, pulls with rebase, commits and pushes. Run at the end of a meaningful work session, or when the user asks to save/commit memory.
+Copies matching sessions into `<repo>/<project>/<agent>/`, writes `<project>/<agent>.index.json`, pulls with rebase, commits and pushes. Run at the end of a meaningful work session or when the user asks to save memory.
 
 ## Pull (restore session memory)
 
 ```bash
-python3 scripts/sync_pull.py <repo-path> --list              # show projects in the repo
-python3 scripts/sync_pull.py <repo-path>                     # restore current project
-python3 scripts/sync_pull.py <repo-path> --project <key>     # restore another project
+python3 scripts/sync_pull.py <repo-path> --list              # projects × agents in the repo
+python3 scripts/sync_pull.py <repo-path>                     # restore current project, all agents
+python3 scripts/sync_pull.py <repo-path> --project <key> --agent codex
 python3 scripts/sync_pull.py <repo-path> --all               # restore everything
 ```
 
-Never overwrites a newer local session copy; merges restored sessions into `session_index.jsonl` so the agent can discover and resume them.
+Never overwrites a newer local copy. Kimi sessions are merged into `session_index.jsonl`; codex/claude files are copied back to their original session stores.
 
 ## Cross-project memory
 
-To let the agent learn from another project's experience: `--list`, then `--project <key>` to restore it, then read the restored `wire.jsonl` / `state.json` files directly, or resume those sessions per the agent-session-resume workflow.
+To let the agent learn from another project's experience: `--list`, then restore with `--project <key>`, then read the restored session files directly or resume those sessions with the agent's own resume mechanism.
 
 ## Notes
 
-- Session files can contain full conversation content — commit only to a repo the user controls; suggest a **private** repo.
-- Both scripts require `git` and network access for pull/push; failures exit non-zero with the git error.
+- Both scripts require `git`; pull/push steps are skipped automatically when the repo has no upstream.
+- Failures exit non-zero with the underlying git error.

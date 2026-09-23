@@ -1,6 +1,8 @@
 # session-memory-sync
 
-A [Kimi](https://www.kimi.com/) skill that syncs agent session memory to and from a git repository, organized per project — one repo manages memory for all your projects.
+An agent skill that syncs coding-agent session memory to and from a git repository, organized per project and per agent — one repo manages memory for all your projects and all your agents.
+
+Works with **Kimi Work / Kimi Code**, **Codex**, and **Claude Code** out of the box; other agents (opencode, deepseek-harness, pi, …) can be added via a one-function adapter in `scripts/agents.py`.
 
 ## Install
 
@@ -8,19 +10,27 @@ A [Kimi](https://www.kimi.com/) skill that syncs agent session memory to and fro
 npx skills add heventure/session-memory-sync
 ```
 
+Compatible with any agent runtime that supports SKILL.md-style skills.
+
+## How it works
+
+- **Push**: extracts the current workspace's session files into `<repo>/<project>/<agent>/`, then commits and pushes.
+- **Pull**: lists projects in the repo and restores sessions back into each agent's local session store — never overwriting a newer local copy.
+- **Repo layout**: `<repo>/<project>/<agent>/` + `<project>/<agent>.index.json`. One private repo covers many projects; agents can pull another project's history to learn from it.
+
 ## Usage
 
-Point the skill at a local clone of your memory repo (argument or `SESSION_MEMORY_REPO` env var), then ask the agent to save or restore session memory. See [SKILL.md](SKILL.md) for the full workflow.
-
 ```bash
-# save current project's sessions
+# save current project's sessions (auto-detects installed agents)
 python3 scripts/sync_push.py <repo-path> --workdir "$PWD"
+python3 scripts/sync_push.py <repo-path> --agent codex   # or kimi / claude / all
 
 # restore
 python3 scripts/sync_pull.py <repo-path> --list
-python3 scripts/sync_pull.py <repo-path> [--project <key> | --all]
+python3 scripts/sync_pull.py <repo-path> [--project <key>] [--agent <name>]
+python3 scripts/sync_pull.py <repo-path> --all
 ```
 
-Repo layout: `<repo>/<project>/index.json` + `sessions/<sessionId>/`.
+Point the scripts at a local clone of your memory repo (argument or `SESSION_MEMORY_REPO` env var). See [SKILL.md](SKILL.md) for the full workflow, including first-run onboarding.
 
 **Note:** session files contain full conversation content — use a **private** memory repo.
