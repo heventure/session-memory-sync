@@ -1,0 +1,33 @@
+{
+  "name": "session-memory-sync",
+  "version": "0.1.0",
+  "description": "Sync Kimi Work agent session memory to and from a git repository, organized per project.",
+  "type": "module",
+  "files": [
+    "SKILL.md",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/skill.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "kimi",
+    "agent",
+    "session",
+    "memory",
+    "skill",
+    "sync",
+    "git"
+  ],
+  "author": "HughesCuit",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/heventure/session-memory-sync.git"
+  }
+}
