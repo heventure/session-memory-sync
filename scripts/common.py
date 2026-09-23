@@ -42,9 +42,34 @@ def save_index(home: Path, rows: list[dict]) -> None:
     p.write_text("\n".join(out) + "\n")
 
 
+_AUTO_NAME = re.compile(r"^[0-9a-f]{8}$|^\d{2}-\d{2}-\d{2}-[0-9a-f]{6,}$|^[0-9a-f-]{12,}$")
+
+
+def _git_repo_name(work_dir: str) -> str | None:
+    r = subprocess.run(["git", "-C", work_dir, "rev-parse", "--show-toplevel"],
+                       capture_output=True, text=True)
+    if r.returncode == 0:
+        return Path(r.stdout.strip()).name or None
+    return None
+
+
 def project_key(work_dir: str) -> str:
-    """Stable, filesystem-safe top-level directory name for a project."""
-    name = Path(work_dir).name or work_dir
+    """Readable, stable, filesystem-safe top-level directory name for a project.
+
+    Priority: git repo name > derived name for auto-generated workspace dirs
+    (e.g. Kimi task dirs like ``11-37-48-dad645d7`` -> ``kimi-task-<parent>-<hash>``)
+    > sanitized basename.
+    """
+    repo = _git_repo_name(work_dir)
+    if repo:
+        name = repo
+    else:
+        name = Path(work_dir).name or work_dir
+        if _AUTO_NAME.match(name):
+            parent = Path(work_dir).parent.name
+            short = re.search(r"[0-9a-f]{6,}", name)
+            suffix = short.group(0)[:8] if short else "x"
+            name = f"kimi-task-{parent}-{suffix}" if parent else f"kimi-task-{suffix}"
     return re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-")
 
 

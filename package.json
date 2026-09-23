@@ -1,6 +1,6 @@
 {
   "name": "session-memory-sync",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Sync Kimi Work agent session memory to and from a git repository, organized per project.",
   "type": "module",
   "files": [

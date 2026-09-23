@@ -30,7 +30,7 @@ python3 scripts/sync_push.py <repo-path> --agent codex                   # one a
 python3 scripts/sync_push.py <repo-path> --agent all                     # every supported agent
 ```
 
-Copies matching sessions into `<repo>/<project>/<agent>/`, writes `<project>/<agent>.index.json`, pulls with rebase, commits and pushes. Run at the end of a meaningful work session or when the user asks to save memory.
+Copies matching sessions into `<repo>/<project>/<agent>/`, writes `<project>/<agent>.index.json`, pulls with rebase, commits and pushes. Project naming priority: git repo name > derived readable name for auto-generated workspace dirs (e.g. `11-37-48-dad645d7` → `kimi-task-2026-09-23-dad645d7`) > sanitized basename. Run at the end of a meaningful work session or when the user asks to save memory.
 
 ## Pull (restore session memory)
 
